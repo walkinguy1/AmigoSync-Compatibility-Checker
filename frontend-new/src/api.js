@@ -1,10 +1,26 @@
 const BASE = "http://localhost:8000";
 
-export async function submitProfile(data) {
+export async function login(userId) {
+  const res = await fetch(`${BASE}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Login failed.");
+  }
+  return res.json();
+}
+
+export async function submitProfile(profileData, teacherPassword = null) {
   const res = await fetch(`${BASE}/submit-profile`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify({
+      profile: profileData,
+      teacher_password: teacherPassword,
+    }),
   });
   if (!res.ok) {
     const err = await res.json();

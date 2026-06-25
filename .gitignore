@@ -27,9 +27,9 @@ amigosync.db
 
 # Node / React
 node_modules/
-frontend/build/
-frontend/.pnp
-frontend/.pnp.js
+frontend-new/build/
+frontend-new/.pnp
+frontend-new/.pnp.js
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

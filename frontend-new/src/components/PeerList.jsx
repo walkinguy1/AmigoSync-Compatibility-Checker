@@ -30,8 +30,8 @@ export default function PeerList({ currentUserId }) {
   }
 
   if (loading) return (
-    <div className="flex items-center gap-3 text-white/40 font-ui text-sm py-12 justify-center">
-      <span className="w-4 h-4 border-2 border-white/20 border-t-primary rounded-full animate-spin" />
+    <div className="flex items-center gap-3 text-black/40 font-ui text-sm py-12 justify-center">
+      <span className="w-4 h-4 border-2 border-black/20 border-t-primary rounded-full animate-spin" />
       Loading peers…
     </div>
   );
@@ -43,8 +43,8 @@ export default function PeerList({ currentUserId }) {
   return (
     <div className="space-y-4 fade-up">
       <div>
-        <h2 className="font-display text-xl text-white font-semibold">Find Your Match</h2>
-        <p className="text-white/40 text-sm font-ui mt-1">
+        <h2 className="font-display text-xl text-black font-semibold">Find Your Match</h2>
+        <p className="text-black/40 text-sm font-ui mt-1">
           {peers.length === 0
             ? "No other students registered yet — check back soon."
             : `${peers.length} student${peers.length !== 1 ? "s" : ""} available to compare with.`}
@@ -64,8 +64,8 @@ export default function PeerList({ currentUserId }) {
                 </span>
               </div>
               <div>
-                <p className="text-white font-ui font-medium text-sm">{peer.name}</p>
-                <p className="text-white/30 text-xs font-ui">{peer.role}</p>
+                <p className="text-black font-ui font-medium text-sm">{peer.name}</p>
+                <p className="text-black/30 text-xs font-ui">{peer.role}</p>
               </div>
             </div>
             <button

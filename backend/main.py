@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from typing import List, Optional
 import sqlite3
 import json
+import os
 
 from sentence_transformers import SentenceTransformer, util
 
@@ -22,6 +23,11 @@ app.add_middleware(
 print("Loading Multilingual MiniLM Model...")
 model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
 print("Model loaded successfully!")
+
+# --- TEACHER PASSWORD ---
+# Change this to whatever you want the admin password to be.
+# In production, store this in a .env file and load with os.getenv().
+TEACHER_PASSWORD = os.getenv("TEACHER_PASSWORD", "amigosync-admin-2025")
 
 # --- HOBBY DESCRIPTIONS ---
 HOBBY_DESCRIPTIONS = {
@@ -57,7 +63,7 @@ def save_profile_db(profile):
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "INSERT OR REPLACE INTO profiles VALUES (?, ?)",
-        (profile.user_id, profile.json())
+        (profile.user_id, profile.model_dump_json())
     )
     conn.commit()
     conn.close()
@@ -86,28 +92,40 @@ class ProfileSchema(BaseModel):
     communication_text: str
     mbti: Optional[str] = None
 
-    @validator("role")
+    @field_validator("role")
+    @classmethod
     def valid_role(cls, v):
         if v not in ["Student", "Teacher"]:
             raise ValueError("Role must be 'Student' or 'Teacher'.")
         return v
 
-    @validator("selected_hobby_ids")
+    @field_validator("selected_hobby_ids")
+    @classmethod
     def at_least_one_hobby(cls, v):
         if not v:
             raise ValueError("Select at least one hobby.")
         return v
 
-    @validator("travel_text", "communication_text")
-    def min_length(cls, v, field):
+    @field_validator("travel_text", "communication_text")
+    @classmethod
+    def min_length(cls, v):
         if len(v.strip()) < 10:
-            raise ValueError(f"'{field.name}' must be at least 10 characters.")
+            raise ValueError("Must be at least 10 characters.")
         return v.strip()
+
+
+class SubmitProfileRequest(BaseModel):
+    profile: ProfileSchema
+    teacher_password: Optional[str] = None  # Only required when role == "Teacher"
 
 
 class CompareRequest(BaseModel):
     user1_id: str
     user2_id: str
+
+
+class LoginRequest(BaseModel):
+    user_id: str
 
 
 # --- MBTI COMPATIBILITY MATRIX (Cognitive Function Theory) ---
@@ -131,11 +149,6 @@ MBTI_MATRIX = {
 }
 
 def get_mbti_score(type1: str, type2: str) -> Optional[float]:
-    """
-    Looks up pre-calculated psychological compatibility from the matrix.
-    Returns a 0–1 float, or None if either type is missing.
-    Defaults to 60% (neutral) for unlisted pairings.
-    """
     if not type1 or not type2:
         return None
     t1, t2 = type1.upper(), type2.upper()
@@ -143,7 +156,7 @@ def get_mbti_score(type1: str, type2: str) -> Optional[float]:
         return MBTI_MATRIX[t1][t2] / 100.0
     elif t2 in MBTI_MATRIX and t1 in MBTI_MATRIX[t2]:
         return MBTI_MATRIX[t2][t1] / 100.0
-    return 0.60  # safe neutral baseline for unlisted pairings
+    return 0.60
 
 
 # --- ROUTES ---
@@ -153,9 +166,39 @@ async def root():
     return {"message": "Welcome to the AmigoSync Backend API!"}
 
 
-# 1. SUBMIT / UPDATE PROFILE
+# 1. LOGIN — returns existing profile for returning users
+@app.post("/login")
+async def login(request: LoginRequest):
+    profiles = load_all_profiles_db()
+    profile = profiles.get(request.user_id.strip())
+    if not profile:
+        raise HTTPException(status_code=404, detail="No profile found for that username.")
+    return {
+        "status": "success",
+        "user_id": profile.user_id,
+        "name": profile.name,
+        "role": profile.role,
+    }
+
+
+# 2. SUBMIT / UPDATE PROFILE
+# Teacher registrations require the correct teacher_password.
 @app.post("/submit-profile")
-async def submit_profile(profile: ProfileSchema):
+async def submit_profile(request: SubmitProfileRequest):
+    profile = request.profile
+
+    if profile.role == "Teacher":
+        if not request.teacher_password:
+            raise HTTPException(
+                status_code=403,
+                detail="A password is required to register as a Teacher."
+            )
+        if request.teacher_password != TEACHER_PASSWORD:
+            raise HTTPException(
+                status_code=403,
+                detail="Incorrect teacher password."
+            )
+
     save_profile_db(profile)
     return {
         "status": "success",
@@ -163,7 +206,7 @@ async def submit_profile(profile: ProfileSchema):
     }
 
 
-# 2. GET OWN PROFILE
+# 3. GET OWN PROFILE
 @app.get("/profile/{user_id}")
 async def get_profile(user_id: str):
     profiles = load_all_profiles_db()
@@ -173,7 +216,7 @@ async def get_profile(user_id: str):
     return profile
 
 
-# 3. DELETE OWN PROFILE
+# 4. DELETE OWN PROFILE
 @app.delete("/profile/{user_id}")
 async def delete_profile(user_id: str):
     profiles = load_all_profiles_db()
@@ -183,7 +226,7 @@ async def delete_profile(user_id: str):
     return {"status": "success", "message": f"Profile {user_id} deleted."}
 
 
-# 4. PEER LIST (Students only, excludes self)
+# 5. PEER LIST (Students only, excludes self)
 @app.get("/peers")
 async def get_available_peers(current_user_id: str):
     profiles = load_all_profiles_db()
@@ -200,7 +243,7 @@ async def get_available_peers(current_user_id: str):
     return peers
 
 
-# 5. TEACHER / ADMIN DASHBOARD
+# 6. TEACHER / ADMIN DASHBOARD
 @app.get("/admin/profiles")
 async def get_all_profiles(requesting_user_id: str):
     profiles = load_all_profiles_db()
@@ -210,10 +253,10 @@ async def get_all_profiles(requesting_user_id: str):
             status_code=403,
             detail="Access denied. Only Teachers can view all records."
         )
-    return {uid: p.dict() for uid, p in profiles.items()}
+    return {uid: p.model_dump() for uid, p in profiles.items()}
 
 
-# 6. COMPATIBILITY COMPARISON
+# 7. COMPATIBILITY COMPARISON
 @app.post("/compare")
 async def compare_profiles(request: CompareRequest):
     profiles = load_all_profiles_db()
@@ -224,35 +267,24 @@ async def compare_profiles(request: CompareRequest):
     if not u1 or not u2:
         raise HTTPException(status_code=404, detail="One or both users not found.")
 
-    # --- Build hobby strings from selected card IDs ---
     u1_hobby_str = " ".join(
         HOBBY_DESCRIPTIONS.get(h, "") for h in u1.selected_hobby_ids
-    ).strip()
+    ).strip() or "No hobbies specified."
     u2_hobby_str = " ".join(
         HOBBY_DESCRIPTIONS.get(h, "") for h in u2.selected_hobby_ids
-    ).strip()
+    ).strip() or "No hobbies specified."
 
-    if not u1_hobby_str:
-        u1_hobby_str = "No hobbies specified."
-    if not u2_hobby_str:
-        u2_hobby_str = "No hobbies specified."
-
-    # --- Encode all dimensions ---
     emb_h1 = model.encode(u1_hobby_str, convert_to_tensor=True)
     emb_h2 = model.encode(u2_hobby_str, convert_to_tensor=True)
-
     emb_t1 = model.encode(u1.travel_text, convert_to_tensor=True)
     emb_t2 = model.encode(u2.travel_text, convert_to_tensor=True)
-
     emb_c1 = model.encode(u1.communication_text, convert_to_tensor=True)
     emb_c2 = model.encode(u2.communication_text, convert_to_tensor=True)
 
-    # --- Cosine similarity per dimension (clamped to [0, 1]) ---
     score_hobbies = max(0.0, float(util.cos_sim(emb_h1, emb_h2)[0][0]))
     score_travel  = max(0.0, float(util.cos_sim(emb_t1, emb_t2)[0][0]))
     score_comm    = max(0.0, float(util.cos_sim(emb_c1, emb_c2)[0][0]))
 
-    # --- MBTI branch logic ---
     mbti_valid = (
         u1.mbti and u2.mbti
         and u1.mbti.upper() != "UNKNOWN"
@@ -263,7 +295,6 @@ async def compare_profiles(request: CompareRequest):
 
     if mbti_valid:
         score_mbti = get_mbti_score(u1.mbti, u2.mbti)
-        # Weighted blend with MBTI: hobbies 35%, travel 30%, comm 20%, mbti 15%
         overall = (
             score_hobbies * 0.35 +
             score_travel  * 0.30 +
@@ -272,7 +303,6 @@ async def compare_profiles(request: CompareRequest):
         )
         mbti_result = round(score_mbti * 100, 2)
     else:
-        # No MBTI: redistribute across 3 core dimensions
         overall = (
             score_hobbies * 0.40 +
             score_travel  * 0.35 +

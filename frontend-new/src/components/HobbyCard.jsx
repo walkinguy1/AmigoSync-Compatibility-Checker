@@ -24,15 +24,15 @@ export default function HobbyCard({ id, emoji, label, selected, onToggle }) {
       onClick={() => onToggle(id)}
       className={`
         flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl border-2
-        transition-all duration-200 cursor-pointer select-none
+        transition-all duration-150 cursor-pointer select-none
         ${selected
-          ? "border-primary bg-primary/20 shadow-lg shadow-primary/20 scale-105"
-          : "border-white/10 bg-white/5 hover:border-muted/40 hover:bg-white/10"
+          ? "border-accent bg-accent/10 shadow-sm scale-[1.04]"
+          : "border-warm bg-cream hover:border-accentlt/50 hover:bg-parchment"
         }
       `}
     >
       <span className="text-2xl leading-none">{emoji}</span>
-      <span className={`text-xs font-semibold font-ui tracking-wide ${selected ? "text-muted" : "text-white/50"}`}>
+      <span className={`text-xs font-semibold font-ui tracking-wide ${selected ? "text-accent" : "text-inkfade"}`}>
         {label}
       </span>
     </button>
