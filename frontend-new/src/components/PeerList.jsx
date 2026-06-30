@@ -59,7 +59,7 @@ export default function PeerList({ currentUserId }) {
           >
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center">
-                <span className="text-muted font-display font-bold text-sm">
+                <span className="text-black font-display font-bold text-sm">
                   {peer.name.charAt(0).toUpperCase()}
                 </span>
               </div>

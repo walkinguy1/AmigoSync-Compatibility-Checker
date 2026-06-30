@@ -24,10 +24,7 @@ print("Loading Multilingual MiniLM Model...")
 model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
 print("Model loaded successfully!")
 
-# --- TEACHER PASSWORD ---
-# Change this to whatever you want the admin password to be.
-# In production, store this in a .env file and load with os.getenv().
-TEACHER_PASSWORD = os.getenv("TEACHER_PASSWORD", "amigosync-admin-2025")
+TEACHER_PASSWORD = os.getenv("TEACHER_PASSWORD", "tusharhoni")
 
 # --- HOBBY DESCRIPTIONS ---
 HOBBY_DESCRIPTIONS = {
@@ -128,6 +125,11 @@ class LoginRequest(BaseModel):
     user_id: str
 
 
+class AdminLoginRequest(BaseModel):
+    admin_id: str
+    password: str
+
+
 # --- MBTI COMPATIBILITY MATRIX (Cognitive Function Theory) ---
 MBTI_MATRIX = {
     "INFP": {"ENFJ": 92, "ENTJ": 92, "INFJ": 65, "ENFP": 65, "INFP": 65, "ESTJ": 40, "ISTP": 40},
@@ -173,6 +175,29 @@ async def login(request: LoginRequest):
     profile = profiles.get(request.user_id.strip())
     if not profile:
         raise HTTPException(status_code=404, detail="No profile found for that username.")
+    return {
+        "status": "success",
+        "user_id": profile.user_id,
+        "name": profile.name,
+        "role": profile.role,
+    }
+
+
+# 1.5. ADMIN LOGIN — for admin/teacher login with password
+@app.post("/admin/login")
+async def admin_login(request: AdminLoginRequest):
+    if request.password != TEACHER_PASSWORD:
+        raise HTTPException(status_code=403, detail="Incorrect admin password.")
+    
+    profiles = load_all_profiles_db()
+    profile = profiles.get(request.admin_id.strip())
+    
+    if not profile:
+        raise HTTPException(status_code=404, detail="Admin profile not found. Please register as a Teacher first.")
+    
+    if profile.role != "Teacher":
+        raise HTTPException(status_code=403, detail="Access denied. Only Teachers can use admin login.")
+    
     return {
         "status": "success",
         "user_id": profile.user_id,

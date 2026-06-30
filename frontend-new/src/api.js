@@ -13,6 +13,19 @@ export async function login(userId) {
   return res.json();
 }
 
+export async function adminLogin(adminId, password) {
+  const res = await fetch(`${BASE}/admin/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ admin_id: adminId, password: password }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Admin login failed.");
+  }
+  return res.json();
+}
+
 export async function submitProfile(profileData, teacherPassword = null) {
   const res = await fetch(`${BASE}/submit-profile`, {
     method: "POST",

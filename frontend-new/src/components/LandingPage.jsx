@@ -1,9 +1,10 @@
 import React, { useState } from "react";
-import { login } from "../api";
+import { login, adminLogin } from "../api";
 
 export default function LandingPage({ onLogin, onRegister }) {
-  const [tab, setTab]       = useState("login"); // "login" | "register"
+  const [tab, setTab]       = useState("login"); // "login" | "register" | "admin"
   const [userId, setUserId] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState(null);
 
@@ -13,6 +14,21 @@ export default function LandingPage({ onLogin, onRegister }) {
     setLoading(true);
     try {
       const data = await login(userId.trim());
+      onLogin(data.user_id, data.role);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAdminLogin() {
+    setError(null);
+    if (!userId.trim()) { setError("Enter your admin username."); return; }
+    if (!password.trim()) { setError("Enter the admin password."); return; }
+    setLoading(true);
+    try {
+      const data = await adminLogin(userId.trim(), password.trim());
       onLogin(data.user_id, data.role);
     } catch (e) {
       setError(e.message);
@@ -36,7 +52,7 @@ export default function LandingPage({ onLogin, onRegister }) {
         <div className="bg-parchment border border-warm rounded-2xl shadow-sm overflow-hidden">
           {/* Tabs */}
           <div className="flex border-b border-warm">
-            {["login", "register"].map((t) => (
+            {["login", "admin", "register"].map((t) => (
               <button
                 key={t}
                 onClick={() => { setTab(t); setError(null); }}
@@ -46,7 +62,7 @@ export default function LandingPage({ onLogin, onRegister }) {
                     : "text-inkfade hover:text-inksoft"
                   }`}
               >
-                {t === "login" ? "Sign In" : "Create Profile"}
+                {t === "login" ? "Sign In" : t === "admin" ? "Admin" : "Create Profile"}
               </button>
             ))}
           </div>
@@ -73,6 +89,41 @@ export default function LandingPage({ onLogin, onRegister }) {
                 {error && <ErrorBox msg={error} />}
                 <button onClick={handleLogin} disabled={loading} className={btnCls}>
                   {loading ? <Spinner /> : "Sign in →"}
+                </button>
+              </div>
+            ) : tab === "admin" ? (
+              <div className="space-y-4 fade-up">
+                <p className="text-inksoft text-sm font-ui">
+                  Admin access — enter your credentials to continue.
+                </p>
+                <div className="space-y-2">
+                  <label className="text-inkfade text-xs font-ui font-semibold uppercase tracking-widest">
+                    Admin Username
+                  </label>
+                  <input
+                    value={userId}
+                    onChange={(e) => setUserId(e.target.value)}
+                    placeholder="e.g. admin_2025"
+                    className={inputCls}
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-inkfade text-xs font-ui font-semibold uppercase tracking-widest">
+                    Admin Password
+                  </label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleAdminLogin()}
+                    placeholder="Enter admin password"
+                    className={inputCls}
+                  />
+                </div>
+                {error && <ErrorBox msg={error} />}
+                <button onClick={handleAdminLogin} disabled={loading} className={btnCls}>
+                  {loading ? <Spinner /> : "Admin Login →"}
                 </button>
               </div>
             ) : (
