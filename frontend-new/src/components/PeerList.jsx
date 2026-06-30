@@ -30,8 +30,8 @@ export default function PeerList({ currentUserId }) {
   }
 
   if (loading) return (
-    <div className="flex items-center gap-3 text-black/40 font-ui text-sm py-12 justify-center">
-      <span className="w-4 h-4 border-2 border-black/20 border-t-primary rounded-full animate-spin" />
+    <div className="flex items-center gap-3 text-inkfade font-ui text-sm py-12 justify-center">
+      <span className="w-4 h-4 border-2 border-warm border-t-accent rounded-full animate-spin" />
       Loading peers…
     </div>
   );
@@ -43,8 +43,8 @@ export default function PeerList({ currentUserId }) {
   return (
     <div className="space-y-4 fade-up">
       <div>
-        <h2 className="font-display text-xl text-black font-semibold">Find Your Match</h2>
-        <p className="text-black/40 text-sm font-ui mt-1">
+        <h2 className="font-display text-xl text-ink font-semibold">All Peers</h2>
+        <p className="text-inkfade text-sm font-ui mt-1">
           {peers.length === 0
             ? "No other students registered yet — check back soon."
             : `${peers.length} student${peers.length !== 1 ? "s" : ""} available to compare with.`}
@@ -55,27 +55,27 @@ export default function PeerList({ currentUserId }) {
         {peers.map((peer) => (
           <div
             key={peer.user_id}
-            className="flex items-center justify-between bg-card border border-white/10 rounded-xl px-4 py-3 hover:border-white/20 transition-colors"
+            className="flex items-center justify-between bg-parchment border border-warm rounded-xl px-4 py-3 hover:border-accentlt/50 transition-colors"
           >
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center">
-                <span className="text-black font-display font-bold text-sm">
+              <div className="w-9 h-9 rounded-full bg-accent/15 flex items-center justify-center">
+                <span className="text-accent font-display font-bold text-sm">
                   {peer.name.charAt(0).toUpperCase()}
                 </span>
               </div>
               <div>
-                <p className="text-black font-ui font-medium text-sm">{peer.name}</p>
-                <p className="text-black/30 text-xs font-ui">{peer.role}</p>
+                <p className="text-ink font-ui font-medium text-sm">{peer.name}</p>
+                <p className="text-inkfade/70 text-xs font-ui">{peer.role}</p>
               </div>
             </div>
             <button
               onClick={() => handleCompare(peer)}
               disabled={comparing === peer.user_id}
-              className="text-xs font-ui font-semibold px-4 py-2 rounded-lg bg-primary/20 text-muted hover:bg-primary/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              className="text-xs font-ui font-semibold px-4 py-2 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
             >
               {comparing === peer.user_id ? (
                 <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 border border-muted border-t-transparent rounded-full animate-spin" />
+                  <span className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
                   Analysing…
                 </span>
               ) : "Compare →"}

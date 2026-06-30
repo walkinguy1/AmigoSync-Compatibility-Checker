@@ -64,6 +64,14 @@ export async function compareProfiles(user1Id, user2Id) {
   return res.json();
 }
 
+export async function getRecommendations(userId, k = 6) {
+  const res = await fetch(
+    `${BASE}/recommend/${encodeURIComponent(userId)}?k=${k}`
+  );
+  if (!res.ok) throw new Error("Could not load recommendations.");
+  return res.json();
+}
+
 export async function getAdminProfiles(requestingUserId) {
   const res = await fetch(
     `${BASE}/admin/profiles?requesting_user_id=${encodeURIComponent(requestingUserId)}`

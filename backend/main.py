@@ -5,7 +5,10 @@ from typing import List, Optional
 import sqlite3
 import json
 import os
+import threading
 
+import numpy as np
+import faiss
 from sentence_transformers import SentenceTransformer, util
 
 app = FastAPI(title="AmigoSync Backend")
@@ -79,7 +82,117 @@ def delete_profile_db(user_id: str):
 
 init_db()
 
-# --- SCHEMAS ---
+# --- SEMANTIC VECTOR INDEX (FAISS) ---
+# Each profile is encoded into a single weighted embedding (hobbies + travel +
+# communication style) so it can be searched for top-K nearest neighbours.
+# This powers the "Recommended Matches" feature: instead of running a full
+# pairwise comparison against every other student (O(n) heavy transformer
+# calls per request), FAISS does an exact nearest-neighbour lookup over
+# pre-computed vectors in milliseconds, and only the short-list of
+# candidates returned by FAISS gets the full weighted re-ranking below.
+EMBED_DIM = model.get_sentence_embedding_dimension()
+
+faiss_index = faiss.IndexFlatIP(EMBED_DIM)   # inner product == cosine sim on normalized vectors
+faiss_id_map: List[str] = []                  # faiss row index -> user_id
+faiss_lock = threading.Lock()
+
+
+def hobby_text(profile: "ProfileSchema") -> str:
+    return " ".join(
+        HOBBY_DESCRIPTIONS.get(h, "") for h in profile.selected_hobby_ids
+    ).strip() or "No hobbies specified."
+
+
+def compute_profile_vector(profile: "ProfileSchema") -> np.ndarray:
+    """Single semantic fingerprint for a profile: a weighted, re-normalized
+    blend of the hobbies / travel / communication embeddings (same relative
+    weights used by the no-MBTI compatibility formula)."""
+    emb_h = model.encode(hobby_text(profile), normalize_embeddings=True)
+    emb_t = model.encode(profile.travel_text, normalize_embeddings=True)
+    emb_c = model.encode(profile.communication_text, normalize_embeddings=True)
+
+    combined = (0.40 * emb_h) + (0.35 * emb_t) + (0.25 * emb_c)
+    norm = np.linalg.norm(combined)
+    if norm > 0:
+        combined = combined / norm
+    return combined.astype("float32")
+
+
+def rebuild_faiss_index() -> None:
+    """Recomputes the FAISS index from every Student profile in SQLite.
+    Called on startup and after any profile create/update/delete so the
+    index never drifts from the source of truth in the database."""
+    global faiss_index, faiss_id_map
+
+    profiles = load_all_profiles_db()
+    students = [p for p in profiles.values() if p.role == "Student"]
+
+    new_index = faiss.IndexFlatIP(EMBED_DIM)
+    new_id_map: List[str] = []
+
+    if students:
+        vectors = np.vstack([compute_profile_vector(p) for p in students])
+        new_index.add(vectors)
+        new_id_map = [p.user_id for p in students]
+
+    with faiss_lock:
+        faiss_index = new_index
+        faiss_id_map = new_id_map
+
+
+def compute_compatibility(u1: "ProfileSchema", u2: "ProfileSchema") -> dict:
+    """Full semantic compatibility breakdown between two profiles. Shared by
+    both /compare (one-to-one) and /recommend (top-K re-ranking)."""
+    emb_h1 = model.encode(hobby_text(u1), convert_to_tensor=True)
+    emb_h2 = model.encode(hobby_text(u2), convert_to_tensor=True)
+    emb_t1 = model.encode(u1.travel_text, convert_to_tensor=True)
+    emb_t2 = model.encode(u2.travel_text, convert_to_tensor=True)
+    emb_c1 = model.encode(u1.communication_text, convert_to_tensor=True)
+    emb_c2 = model.encode(u2.communication_text, convert_to_tensor=True)
+
+    score_hobbies = max(0.0, float(util.cos_sim(emb_h1, emb_h2)[0][0]))
+    score_travel  = max(0.0, float(util.cos_sim(emb_t1, emb_t2)[0][0]))
+    score_comm    = max(0.0, float(util.cos_sim(emb_c1, emb_c2)[0][0]))
+
+    mbti_valid = (
+        u1.mbti and u2.mbti
+        and u1.mbti.upper() != "UNKNOWN"
+        and u2.mbti.upper() != "UNKNOWN"
+        and len(u1.mbti) == 4
+        and len(u2.mbti) == 4
+    )
+
+    if mbti_valid:
+        score_mbti = get_mbti_score(u1.mbti, u2.mbti)
+        overall = (
+            score_hobbies * 0.35 +
+            score_travel  * 0.30 +
+            score_comm    * 0.20 +
+            score_mbti    * 0.15
+        )
+        mbti_result = round(score_mbti * 100, 2)
+    else:
+        overall = (
+            score_hobbies * 0.40 +
+            score_travel  * 0.35 +
+            score_comm    * 0.25
+        )
+        mbti_result = None
+
+    return {
+        "user1_name": u1.name,
+        "user2_name": u2.name,
+        "overall_compatibility": round(overall * 100, 2),
+        "mbti_used": mbti_valid,
+        "compatibility_breakdown": {
+            "hobbies_match":       round(score_hobbies * 100, 2),
+            "travel_alignment":    round(score_travel  * 100, 2),
+            "communication_style": round(score_comm    * 100, 2),
+            "mbti_alignment":      mbti_result,
+        }
+    }
+
+
 class ProfileSchema(BaseModel):
     user_id: str
     name: str
@@ -161,6 +274,10 @@ def get_mbti_score(type1: str, type2: str) -> Optional[float]:
     return 0.60
 
 
+# Build the semantic index now that ProfileSchema / scoring helpers exist.
+rebuild_faiss_index()
+
+
 # --- ROUTES ---
 
 @app.get("/")
@@ -225,6 +342,7 @@ async def submit_profile(request: SubmitProfileRequest):
             )
 
     save_profile_db(profile)
+    rebuild_faiss_index()
     return {
         "status": "success",
         "message": f"Profile saved for {profile.name} ({profile.user_id})"
@@ -248,6 +366,7 @@ async def delete_profile(user_id: str):
     if user_id not in profiles:
         raise HTTPException(status_code=404, detail="Profile not found.")
     delete_profile_db(user_id)
+    rebuild_faiss_index()
     return {"status": "success", "message": f"Profile {user_id} deleted."}
 
 
@@ -292,58 +411,65 @@ async def compare_profiles(request: CompareRequest):
     if not u1 or not u2:
         raise HTTPException(status_code=404, detail="One or both users not found.")
 
-    u1_hobby_str = " ".join(
-        HOBBY_DESCRIPTIONS.get(h, "") for h in u1.selected_hobby_ids
-    ).strip() or "No hobbies specified."
-    u2_hobby_str = " ".join(
-        HOBBY_DESCRIPTIONS.get(h, "") for h in u2.selected_hobby_ids
-    ).strip() or "No hobbies specified."
+    return compute_compatibility(u1, u2)
 
-    emb_h1 = model.encode(u1_hobby_str, convert_to_tensor=True)
-    emb_h2 = model.encode(u2_hobby_str, convert_to_tensor=True)
-    emb_t1 = model.encode(u1.travel_text, convert_to_tensor=True)
-    emb_t2 = model.encode(u2.travel_text, convert_to_tensor=True)
-    emb_c1 = model.encode(u1.communication_text, convert_to_tensor=True)
-    emb_c2 = model.encode(u2.communication_text, convert_to_tensor=True)
 
-    score_hobbies = max(0.0, float(util.cos_sim(emb_h1, emb_h2)[0][0]))
-    score_travel  = max(0.0, float(util.cos_sim(emb_t1, emb_t2)[0][0]))
-    score_comm    = max(0.0, float(util.cos_sim(emb_c1, emb_c2)[0][0]))
+# 8. TOP-K SEMANTIC RECOMMENDATIONS
+# Two-stage recommender: FAISS does fast top-K candidate retrieval over the
+# pre-computed profile vectors (semantic profile matching), then each
+# candidate is re-ranked with the full weighted compatibility formula
+# (hobbies / travel / communication / MBTI) for an accurate final order.
+@app.get("/recommend/{user_id}")
+async def recommend_matches(user_id: str, k: int = 5):
+    if k < 1:
+        k = 1
+    if k > 25:
+        k = 25
 
-    mbti_valid = (
-        u1.mbti and u2.mbti
-        and u1.mbti.upper() != "UNKNOWN"
-        and u2.mbti.upper() != "UNKNOWN"
-        and len(u1.mbti) == 4
-        and len(u2.mbti) == 4
-    )
+    profiles = load_all_profiles_db()
+    user = profiles.get(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User profile not found. Submit your profile first.")
 
-    if mbti_valid:
-        score_mbti = get_mbti_score(u1.mbti, u2.mbti)
-        overall = (
-            score_hobbies * 0.35 +
-            score_travel  * 0.30 +
-            score_comm    * 0.20 +
-            score_mbti    * 0.15
-        )
-        mbti_result = round(score_mbti * 100, 2)
-    else:
-        overall = (
-            score_hobbies * 0.40 +
-            score_travel  * 0.35 +
-            score_comm    * 0.25
-        )
-        mbti_result = None
+    with faiss_lock:
+        pool_size = len(faiss_id_map)
+        id_map_snapshot = list(faiss_id_map)
+        index_snapshot = faiss_index
+
+    if pool_size == 0:
+        return {"user_id": user_id, "candidates_searched": 0, "recommendations": []}
+
+    query_vec = compute_profile_vector(user).reshape(1, -1)
+
+    # Widen the candidate pool beyond k so the weighted re-rank (which
+    # includes MBTI and per-dimension weights FAISS doesn't see) can surface
+    # the true best matches, not just the closest single-vector neighbours.
+    search_k = min(max(k * 3, k + 5), pool_size)
+    similarities, indices = index_snapshot.search(query_vec, search_k)
+
+    candidate_ids = []
+    for sim, idx in zip(similarities[0], indices[0]):
+        if idx < 0:
+            continue
+        candidate_id = id_map_snapshot[idx]
+        if candidate_id == user_id:
+            continue
+        candidate_ids.append((candidate_id, float(sim)))
+
+    recommendations = []
+    for candidate_id, semantic_sim in candidate_ids:
+        candidate = profiles.get(candidate_id)
+        if not candidate:
+            continue
+        result = compute_compatibility(user, candidate)
+        result["user_id"] = candidate_id
+        result["semantic_similarity"] = round(max(0.0, semantic_sim) * 100, 2)
+        recommendations.append(result)
+
+    recommendations.sort(key=lambda r: r["overall_compatibility"], reverse=True)
 
     return {
-        "user1_name": u1.name,
-        "user2_name": u2.name,
-        "overall_compatibility": round(overall * 100, 2),
-        "mbti_used": mbti_valid,
-        "compatibility_breakdown": {
-            "hobbies_match":       round(score_hobbies * 100, 2),
-            "travel_alignment":    round(score_travel  * 100, 2),
-            "communication_style": round(score_comm    * 100, 2),
-            "mbti_alignment":      mbti_result,
-        }
+        "user_id": user_id,
+        "candidates_searched": len(candidate_ids),
+        "recommendations": recommendations[:k],
     }
